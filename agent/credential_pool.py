@@ -400,8 +400,15 @@ class CredentialPool:
         return bool(self._entries)
 
     def has_available(self) -> bool:
-        """True if at least one entry is not currently in exhaustion cooldown."""
-        return bool(self._available_entries())
+        """True if at least one entry is currently usable.
+
+        This is a stateful check, not a raw status-flag inspection: an entry
+        whose exhaustion cooldown has already elapsed should count as available,
+        and singleton-backed OAuth entries may become usable again when another
+        process refreshes/re-auths them in the shared auth store.
+        """
+        with self._lock:
+            return bool(self._available_entries(clear_expired=True, refresh=True))
 
     def entries(self) -> List[PooledCredential]:
         return list(self._entries)
@@ -511,23 +518,34 @@ class CredentialPool:
                 return entry
             store_access = tokens.get("access_token", "")
             store_refresh = tokens.get("refresh_token", "")
-            # Adopt auth.json tokens when either side differs.  Codex refresh
-            # tokens are single-use too, so a fresh refresh_token from
-            # another process means our entry's pair is consumed/stale.
+            store_last_refresh = _parse_absolute_timestamp(state.get("last_refresh"))
+            entry_status_at = _parse_absolute_timestamp(entry.last_status_at)
+            # Adopt auth.json tokens when either side differs. Codex refresh
+            # tokens are single-use too, so a fresh refresh_token from another
+            # process means our entry's pair is consumed/stale.
+            #
+            # Also clear stale exhaustion when auth.json records a newer
+            # ``last_refresh`` than the exhaustion marker. That covers the case
+            # where another Hermes process or an explicit re-auth/reset made the
+            # shared singleton usable again even if the access token string did
+            # not materially change.
             entry_access = entry.access_token or ""
             entry_refresh = entry.refresh_token or ""
-            if store_access and (
+            tokens_changed = store_access and (
                 store_access != entry_access
                 or (store_refresh and store_refresh != entry_refresh)
-            ):
+            )
+            refreshed_since_exhaustion = (
+                entry.last_status == STATUS_EXHAUSTED
+                and store_last_refresh is not None
+                and (entry_status_at is None or store_last_refresh > entry_status_at)
+            )
+            if tokens_changed or refreshed_since_exhaustion:
                 logger.debug(
-                    "Pool entry %s: syncing Codex tokens from auth.json "
-                    "(refreshed by another process)",
+                    "Pool entry %s: syncing Codex auth state from auth.json",
                     entry.id,
                 )
                 field_updates: Dict[str, Any] = {
-                    "access_token": store_access,
-                    "refresh_token": store_refresh or entry.refresh_token,
                     "last_status": None,
                     "last_status_at": None,
                     "last_error_code": None,
@@ -535,6 +553,10 @@ class CredentialPool:
                     "last_error_message": None,
                     "last_error_reset_at": None,
                 }
+                if store_access:
+                    field_updates["access_token"] = store_access
+                if store_refresh:
+                    field_updates["refresh_token"] = store_refresh
                 if state.get("last_refresh"):
                     field_updates["last_refresh"] = state["last_refresh"]
                 updated = replace(entry, **field_updates)
@@ -1250,11 +1272,16 @@ class CredentialPool:
         return entry
 
     def peek(self) -> Optional[PooledCredential]:
-        current = self.current()
-        if current is not None:
-            return current
-        available = self._available_entries()
-        return available[0] if available else None
+        with self._lock:
+            current = self.current()
+            available = self._available_entries(clear_expired=True, refresh=True)
+            if not available:
+                return None
+            if current is not None:
+                for entry in available:
+                    if entry.id == current.id:
+                        return entry
+            return available[0]
 
     def mark_exhausted_and_rotate(
         self,

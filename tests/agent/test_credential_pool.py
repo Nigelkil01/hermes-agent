@@ -102,6 +102,99 @@ def test_select_clears_expired_exhaustion(tmp_path, monkeypatch):
     assert entry.last_status == "ok"
 
 
+def test_has_available_clears_elapsed_reset_window(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "openai-codex": [
+                    {
+                        "id": "cred-1",
+                        "label": "codex",
+                        "auth_type": "oauth",
+                        "priority": 0,
+                        "source": "device_code",
+                        "access_token": "***",
+                        "refresh_token": "refresh",
+                        "last_status": "exhausted",
+                        "last_status_at": time.time() - 60,
+                        "last_error_code": 429,
+                        "last_error_reason": "usage_limit_reached",
+                        "last_error_reset_at": time.time() - 5,
+                    }
+                ],
+            },
+            "providers": {
+                "openai-codex": {
+                    "tokens": {
+                        "access_token": "***",
+                        "refresh_token": "refresh",
+                    }
+                }
+            },
+        },
+    )
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("openai-codex")
+
+    assert pool.has_available() is True
+    peeked = pool.peek()
+    assert peeked is not None
+    assert peeked.last_status == "ok"
+
+
+def test_peek_resyncs_codex_entry_from_auth_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "openai-codex": [
+                    {
+                        "id": "cred-1",
+                        "label": "codex",
+                        "auth_type": "oauth",
+                        "priority": 0,
+                        "source": "device_code",
+                        "access_token": "stale-token",
+                        "refresh_token": "stale-refresh",
+                        "last_status": "exhausted",
+                        "last_status_at": time.time(),
+                        "last_error_code": 429,
+                        "last_error_reason": "usage_limit_reached",
+                        "last_error_reset_at": time.time() + 3600,
+                    }
+                ],
+            },
+            "providers": {
+                "openai-codex": {
+                    "tokens": {
+                        "access_token": "fresh-token",
+                        "refresh_token": "fresh-refresh",
+                    },
+                    "last_refresh": datetime.fromtimestamp(time.time() + 5, timezone.utc).isoformat(),
+                }
+            },
+        },
+    )
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("openai-codex")
+
+    assert pool.has_available() is True
+    peeked = pool.peek()
+    assert peeked is not None
+    assert peeked.access_token == "fresh-token"
+    assert peeked.refresh_token == "fresh-refresh"
+    assert peeked.last_status is None
+
+
 def test_round_robin_strategy_rotates_priorities(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     _write_auth_store(
