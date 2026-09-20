@@ -915,7 +915,9 @@ class PluginContext:
 
     def register_hook(self, hook_name: str, callback: Callable) -> PluginRegistration:
         """Register a lifecycle hook callback (unknown names warn but are still stored)."""
-        return self._track_callback("hook", hook_name, callback, self._manager._hooks, VALID_HOOKS)
+        return self._track_callback(
+            "hook", hook_name, callback, self._manager._hooks, VALID_HOOKS,
+        )
 
     def register_middleware(self, kind: str, callback: Callable) -> PluginRegistration:
         """Register behavior-changing middleware (request kinds rewrite the payload, execution kinds
@@ -926,14 +928,22 @@ class PluginContext:
 
     def _track_callback(
         self, kind: str, key: str, callback: Callable, mapping: Dict[str, List[Callable]],
-        valid: Set[str],
+        valid: Set[str], *, owner_mapping: Optional[Dict[str, List[str]]] = None,
     ) -> PluginRegistration:
         """Append ``callback`` under ``key`` (warning on unknown ``key``) and lease its removal."""
         if key not in valid:
             logger.warning("Plugin '%s' registered unknown %s '%s' (valid: %s)", self.manifest.name, kind,
                            key, ", ".join(sorted(valid)))
         mapping.setdefault(key, []).append(callback)
-        handle = self._track(kind, key, lambda: self._manager._remove_callback(mapping, key, callback))
+        if owner_mapping is None:
+            release = lambda: self._manager._remove_callback(mapping, key, callback)
+        else:
+            owner = self.plugin_id
+            owner_mapping.setdefault(key, []).append(owner)
+            release = lambda: self._manager._remove_owned_callback(
+                mapping, owner_mapping, key, callback, owner
+            )
+        handle = self._track(kind, key, release)
         logger.debug("Plugin %s registered %s: %s", self.manifest.name, kind, key)
         return handle
 

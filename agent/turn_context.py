@@ -673,20 +673,21 @@ def _collect_pre_llm_call_context(
     if getattr(agent, "_persist_disabled", False):
         return ""
     try:
+        hook_payload = {
+            "session_id": agent.session_id,
+            "task_id": effective_task_id,
+            "turn_id": turn_id,
+            "user_message": original_user_message,
+            "conversation_history": list(messages),
+            "is_first_turn": not bool(conversation_history),
+            "model": agent.model,
+            "platform": getattr(agent, "platform", None) or "",
+            "parent_session_id": getattr(agent, "_parent_session_id", None) or "",
+            "sender_id": getattr(agent, "_user_id", None) or "",
+        }
         from hermes_cli.lifecycle import invoke_hook as _invoke_hook
-        _pre_results = _invoke_hook(
-            "pre_llm_call",
-            session_id=agent.session_id,
-            task_id=effective_task_id,
-            turn_id=turn_id,
-            user_message=original_user_message,
-            conversation_history=list(messages),
-            is_first_turn=(not bool(conversation_history)),
-            model=agent.model,
-            platform=getattr(agent, "platform", None) or "",
-            parent_session_id=getattr(agent, "_parent_session_id", None) or "",
-            sender_id=getattr(agent, "_user_id", None) or "",
-        )
+
+        _pre_results = _invoke_hook("pre_llm_call", **hook_payload)
         try:
             # Spill oversized per-hook context to disk so a runaway plugin can't inflate every subsequent
             # turn's prompt. Ported from openai/codex PR #21069 ("Spill large hook outputs from context").
