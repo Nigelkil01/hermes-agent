@@ -135,6 +135,32 @@ class PluginLedgerMixin:
         if not callbacks:
             mapping.pop(key, None)
 
+    def _remove_owned_callback(
+        self, mapping: Dict[str, List[Callable]], owners: Dict[str, List[str]], key: str,
+        callback: Callable, owner: str,
+    ) -> None:
+        """Remove one callback and its same-index host-owned plugin identity."""
+        callbacks = mapping.get(key)
+        owner_rows = owners.get(key)
+        if callbacks is None or owner_rows is None or len(callbacks) != len(owner_rows):
+            self._remove_callback(mapping, key, callback)
+            return
+        index = next(
+            (
+                index for index in range(len(callbacks) - 1, -1, -1)
+                if callbacks[index] is callback and owner_rows[index] == owner
+            ),
+            None,
+        )
+        if index is None:
+            return
+        del callbacks[index]
+        del owner_rows[index]
+        if not callbacks:
+            mapping.pop(key, None)
+        if not owner_rows:
+            owners.pop(key, None)
+
     def _restore_mapping(self, mapping: Dict[str, Any], key: str, current: Any, previous: Optional[Any]) -> bool:
         """Restore a manager-local mapping only when *current* is still present."""
         if mapping.get(key) is not current:
