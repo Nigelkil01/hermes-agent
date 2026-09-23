@@ -2891,7 +2891,16 @@ class GatewayTurnMixin:
         """Profile-scoping wrapper around ``_run_agent_inner`` (same keyword parameters; pass-through
         when multiplexing is off)."""
         with self._profile_scope_for_source(source):
-            return await self._run_agent_inner(message, context_prompt, history, source, session_id, **turn_kwargs)
+            started = time.monotonic()
+            try:
+                return await self._run_agent_inner(message, context_prompt, history, source, session_id, **turn_kwargs)
+            finally:
+                # The API-call and individual-tool durations are already logged by the agent.
+                # This content-free wall time exposes the remaining routing/turn overhead.
+                logger.info(
+                    "gateway agent turn session=%s platform=%s duration_s=%.3f",
+                    session_id, getattr(source.platform, "value", source.platform), time.monotonic() - started,
+                )
 
     def _run_agent_display_settings(self, source: SessionSource) -> "GatewayRunner._RunAgentDisplay":
         """Resolve per-platform display, progress, status and streaming-surface settings for a turn."""

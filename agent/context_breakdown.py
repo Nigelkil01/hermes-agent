@@ -45,9 +45,9 @@ def _bytes_to_tokens(size: Optional[int]) -> Optional[int]:
     return None if size is None else (int(size) + 3) // CHARS_PER_TOKEN
 
 
-def _skills_block(stable: str) -> str:
-    """The live ``<available_skills>`` block inside the stable tier, or ''."""
-    m = _SKILLS_BLOCK_RE.search(stable)
+def _skills_block(tier: str) -> str:
+    """The live ``<available_skills>`` block inside a prompt tier, or ''."""
+    m = _SKILLS_BLOCK_RE.search(tier)
     return m.group(0) if m else ""
 
 
@@ -123,10 +123,11 @@ def compute_session_context_breakdown(agent: Any, messages: Optional[List[dict]]
     messages = messages or []
     parts = build_system_prompt_parts(agent)
     stable = parts.get("stable", "") or ""
-    skills_index = _skills_block(stable)
+    volatile = parts.get("volatile", "") or ""
+    skills_index = _skills_block(volatile) or _skills_block(stable)
     memory_block, user_block = _memory_blocks(agent)
     system_prompt_text = _join(
-        _strip_blocks(stable, skills_index), _strip_blocks(parts.get("volatile", "") or "", memory_block, user_block)
+        _strip_blocks(stable, skills_index), _strip_blocks(volatile, skills_index, memory_block, user_block)
     )
     builtin_tools, mcp_tools, subagent_tools = _split_tools(list(getattr(agent, "tools", None) or []))
     tokens_by_id = {
@@ -189,7 +190,8 @@ def compute_context_details(agent: Any) -> Dict[str, Any]:
     from hermes_cli.prompt_size import _compute_skills_breakdown, _compute_toolsets_breakdown
     from agent.system_prompt import build_system_prompt_parts
 
-    skills_block = _skills_block(build_system_prompt_parts(agent).get("stable", "") or "")
+    parts = build_system_prompt_parts(agent)
+    skills_block = _skills_block(parts.get("volatile", "") or "") or _skills_block(parts.get("stable", "") or "")
     tools = list(getattr(agent, "tools", None) or [])
     return {
         "skills": [

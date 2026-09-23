@@ -1,7 +1,8 @@
 """Prompt-size diagnostic: ``hermes prompt-size``.
 
 Builds a real inspection agent (so the numbers match what ships on the wire) but never makes a
-network call: dummy credentials force ``AIAgent.__init__`` down the direct-construction path, then
+network call: dummy credentials and an inert base URL force ``AIAgent.__init__`` down the
+direct-construction path without OpenRouter's metadata prewarm, then
 ``build_system_prompt_parts`` / ``agent.tools`` are inspected offline.
 """
 
@@ -46,8 +47,8 @@ def _tool_name(tool: Any) -> str:
 
 
 def _build_inspection_agent(platform: str) -> Any:
-    """Offline AIAgent for prompt inspection: dummy ``api_key`` + ``base_url`` force the
-    direct-construction path (no provider auto-detection, no network); toolsets resolve the way
+    """Offline AIAgent for prompt inspection: dummy ``api_key`` + inert ``base_url`` force the
+    direct-construction path (no provider auto-detection or metadata prewarm); toolsets resolve the way
     the gateway does so the breakdown matches a real session.
     """
     from run_agent import AIAgent
@@ -60,7 +61,7 @@ def _build_inspection_agent(platform: str) -> Any:
     agent_cfg = cfg.get("agent") or {}
     return AIAgent(
         model=model_cfg.get("default") or model_cfg.get("model") or "",
-        api_key="inspect-only", base_url="https://openrouter.ai/api/v1", quiet_mode=True, save_trajectories=False,
+        api_key="inspect-only", base_url="https://inspect.invalid/v1", quiet_mode=True, save_trajectories=False,
         platform=platform, enabled_toolsets=sorted(_get_platform_tools(cfg, platform)),
         disabled_toolsets=parse_config_string_list(agent_cfg.get("disabled_toolsets")) or None,
     )
