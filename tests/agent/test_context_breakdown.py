@@ -32,12 +32,9 @@ def _make_agent(
 
 
 def test_breakdown_includes_major_categories():
-    stable = (
-        "base guidance\n"
-        "<available_skills>\n  demo:\n    - hello: hi\n</available_skills>"
-    )
+    stable = "base guidance"
     context = "# Project Context\nFollow AGENTS.md"
-    volatile = "Current time: now"
+    volatile = "<available_skills>\n  demo:\n    - hello: hi\n</available_skills>\nCurrent time: now"
     history = [{"role": "user", "content": "hello there"}]
     agent, parts = _make_agent(stable=stable, context=context, volatile=volatile)
 
@@ -48,6 +45,20 @@ def test_breakdown_includes_major_categories():
     assert {"system_prompt", "tool_definitions", "rules", "skills", "mcp", "subagent_definitions", "conversation"} <= ids
     assert data["context_max"] == 200_000
     assert data["estimated_total"] > 0
+    by_id = {item["id"]: item["tokens"] for item in data["categories"]}
+    without_skills = {**parts, "volatile": "Current time: now"}
+    with patch("agent.system_prompt.build_system_prompt_parts", return_value=without_skills):
+        baseline = compute_session_context_breakdown(agent, history)
+    baseline_by_id = {item["id"]: item["tokens"] for item in baseline["categories"]}
+    assert by_id["skills"] > 0
+    assert by_id["system_prompt"] == baseline_by_id["system_prompt"]
+
+
+def test_context_details_lists_skills_from_volatile_tier():
+    agent, parts = _make_agent(volatile="<available_skills>\n  demo:\n    - hello: hi\n</available_skills>")
+    with patch("agent.system_prompt.build_system_prompt_parts", return_value=parts):
+        details = compute_context_details(agent)
+    assert any(skill["name"] == "hello" and skill["index_tokens"] > 0 for skill in details["skills"])
 
 
 
@@ -124,5 +135,4 @@ def test_details_lines_caps_listing():
     }
     lines = render_context_details_lines(details)
     assert any("… and 5 more" in line for line in lines)
-
 

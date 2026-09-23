@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -47,10 +48,21 @@ def isolated_home(tmp_path, monkeypatch):
 
 def test_runs_offline_without_credentials(isolated_home, monkeypatch):
     """No provider credentials configured → still produces a breakdown."""
+    from run_agent import _openrouter_prewarm_done
+
     for var in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "NOUS_API_KEY",
                 "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(var, raising=False)
-    data = compute_prompt_breakdown("cli")
+    was_set = _openrouter_prewarm_done.is_set()
+    _openrouter_prewarm_done.clear()
+    try:
+        with patch("agent.agent_init.fetch_model_metadata") as fetch_metadata:
+            data = compute_prompt_breakdown("cli")
+        assert not _openrouter_prewarm_done.is_set()
+        fetch_metadata.assert_not_called()
+    finally:
+        if was_set:
+            _openrouter_prewarm_done.set()
     assert data["system_prompt"]["bytes"] > 0
 
 
@@ -115,7 +127,5 @@ def test_skills_breakdown_attributes_demoted_category_shared_line(isolated_home)
         assert entry["index_line_total_bytes"] == shared_line_bytes
         assert entry["index_line_shared_bytes"] > 0
         assert entry["index_line_skill_count"] == 2
-
-
 
 

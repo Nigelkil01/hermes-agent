@@ -18,8 +18,10 @@ import pytest
 from agent.context_compressor import (
     ContextCompressor,
     _LEAN_ANCHOR_HEADING,
+    _LEAN_ANCHOR_BUDGET_CHARS,
     _LEAN_RECOVERY_HEADING,
     _LEAN_SESSION_LOG_HEADING,
+    _build_anchor_index,
 )
 
 
@@ -174,6 +176,15 @@ class TestSampledSummaryInput:
         assert mock_call.call_count == 1
         prompt = mock_call.call_args.kwargs["messages"][0]["content"]
         assert "summary input truncated" in prompt
+
+
+def test_oversized_anchor_category_preserves_later_exact_identifiers():
+    paths = " ".join(f"src/{'nested-' * 12}{i:03d}.py" for i in range(80))
+    index = _build_anchor_index([{"role": "tool", "content": paths + "\nValueError: exact failure"}])
+    ledger = index.split(_LEAN_ANCHOR_HEADING + "\n", 1)[1].split("\n(Exact identifiers", 1)[0]
+    assert "files: src/" in ledger
+    assert "errors: ValueError: exact failure" in ledger
+    assert len(ledger) <= _LEAN_ANCHOR_BUDGET_CHARS
 
 
 if __name__ == "__main__":

@@ -968,8 +968,7 @@ def _build_anchor_index(turns: List[Dict[str, Any]]) -> str:
     text = "\n".join(c for c in (msg.get("content") for msg in turns) if isinstance(c, str) and c)
     if not text:
         return ""
-    sections: list[str] = []
-    used = 0
+    ranked_sections: list[tuple[str, list[str]]] = []
     for label, pattern, cap in _ANCHOR_PATTERNS:
         counts: dict[str, int] = {}
         last_seen: dict[str, int] = {}
@@ -982,11 +981,25 @@ def _build_anchor_index(turns: List[Dict[str, Any]]) -> str:
         if not counts:
             continue
         ranked = sorted(counts, key=lambda v: (-counts[v], -last_seen[v]))[:cap]
-        line = f"{label}: " + ", ".join(f"{v}(x{counts[v]})" if counts[v] > 1 else v for v in ranked)
-        if used + len(line) > _LEAN_ANCHOR_BUDGET_CHARS:
-            break
-        sections.append(line)
-        used += len(line)
+        ranked_sections.append((label, [f"{v}(x{counts[v]})" if counts[v] > 1 else v for v in ranked]))
+    sections: list[str] = []
+    used = 0
+    for i, (label, values) in enumerate(ranked_sections):
+        # Reserve one exact identifier for each later category. A large file/PR
+        # category must not erase short errors or URLs later in the ledger.
+        reserve = sum(len(later_label) + 2 + len(later_values[0]) + 1
+                      for later_label, later_values in ranked_sections[i + 1:])
+        line = f"{label}: "
+        selected = 0
+        for value in values:
+            addition = (", " if selected else "") + value
+            if used + len(line) + len(addition) + 1 + reserve > _LEAN_ANCHOR_BUDGET_CHARS:
+                continue
+            line += addition
+            selected += 1
+        if selected:
+            sections.append(line)
+            used += len(line) + 1
     if not sections:
         return ""
     return (
